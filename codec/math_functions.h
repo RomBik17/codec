@@ -7,9 +7,12 @@
 #define FIX(x)	((int) ((x) * CONST_SCALE))
 #define DESCALE(x) ((int)((x) / CONST_SCALE))
 
-double PSNR(char* startFrame, char* dumpedFrame);
-void quanting(int* block, int blockSize, int Q);
-void dequanting(int* block, int blockSize, int Q);
+double variance(int* array, int N);
+double variance(char* array, int N);
+int VAQ(double blockVAR, double frameVAR);
+double charPSNR(char* startFrame, char* dumpedFrame);
+void quanting(int* block, int blockSize, int QP);
+void dequanting(int* block, int blockSize, int QP);
 void IDCT(int* block, int blockSize);
 void DCT(int* block, int blockSize);
 void SAD(int* currentBlock, int* predictedBlock, int* sadBlock, int blockSize);

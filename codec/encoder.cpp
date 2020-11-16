@@ -340,9 +340,8 @@ int* intra_frame(char* reconstructedFrame, int* modeMatrix,
     return residualBlock;
 }
 
-//return no-zero data in block
-int splitBlockPadding(char* tempFrame, char* previousFrame, char* reconstructedFrame,
-    int* frameCoef, int* modeMatrix, int blockSize, int Q, int y, int x, int frameN)
+void splitBlockPadding(char* tempFrame, char* previousFrame, char* reconstructedFrame,
+    int* frameCoef, int* modeMatrix, int* qMatrix, int blockSize, int y, int x, int frameN, double frameVAR)
 {
     int* predictedBlock = new int[blockSize * blockSize];
     int* reconstructedBlock = new int[blockSize * blockSize];
@@ -362,33 +361,32 @@ int splitBlockPadding(char* tempFrame, char* previousFrame, char* reconstructedF
         }
     }
 
+    double blockVAR = variance(predictedBlock, blockSize * blockSize);
+    int QP = Q + VAQ(blockVAR, frameVAR);
+
+    if (QP < 1) QP = 1;
+    else if (QP > 6) QP = 6;
+
     //if it's a first frame, we have to do intra-frame prediction
     int* residualBlock = nullptr;
-    if (frameN == 0)
+    if (frameN == 0 || (frameN + 1) % IR == 0)
     {
         residualBlock = intra_frame(reconstructedFrame, modeMatrix, predictedBlock, reconstructedBlock, blockSize, y, x);
     }
     else
     {
-        residualBlock = inter_frame(reconstructedFrame, previousFrame, modeMatrix, predictedBlock, reconstructedBlock, blockSize, y, x);
+        residualBlock = inter_frame(tempFrame, previousFrame, modeMatrix, predictedBlock, reconstructedBlock, blockSize, y, x);
     }
 
     //transform and quantize
     DCT(residualBlock, blockSize);
-    quanting(residualBlock, blockSize, Q);
-
-    //count no-zero data in block
-    int dataCount = 0;
-    for (int i = 0; i < blockSize; ++i)
-    {
-        int r = i * blockSize;
-        for (int j = 0; j < blockSize; ++j)
-        {
-            if (residualBlock[r + j] != 0) dataCount++;
-        }
-    }
+    quanting(residualBlock, blockSize, QP);
 
     int wBlock;
+    if (((int)(LENGTH / blockSize)) * blockSize == LENGTH) wBlock = LENGTH / blockSize;
+    else wBlock = (LENGTH / blockSize + 1);
+    qMatrix[(y / blockSize) * wBlock + (x / blockSize)] = QP;
+
     if (((int)(LENGTH / blockSize)) * blockSize == LENGTH) wBlock = LENGTH;
     else wBlock = (LENGTH / blockSize + 1) * blockSize;
     //writing coeficients
@@ -402,24 +400,27 @@ int splitBlockPadding(char* tempFrame, char* previousFrame, char* reconstructedF
         }
     }
 
-    //dequantize and retransform
-    dequanting(residualBlock, blockSize, Q);
-    IDCT(residualBlock, blockSize);
-
-    reverseSAD(predictedBlock, reconstructedBlock, residualBlock, blockSize);
-
-    for (int i = y; i < (blockSize + y); ++i)
+    if (frameN == 0 || (frameN + 1) % IR == 0)
     {
-        int r = (i - y) * blockSize - x;
-        int h = i * LENGTH;
-        for (int j = x; j < (blockSize + x); ++j)
+        //dequantize and retransform
+        dequanting(residualBlock, blockSize, QP);
+        IDCT(residualBlock, blockSize);
+
+        reverseSAD(predictedBlock, reconstructedBlock, residualBlock, blockSize);
+
+        for (int i = y; i < (blockSize + y); ++i)
         {
-            if (i < HEIGHT && j < LENGTH)
+            int r = (i - y) * blockSize - x;
+            int h = i * LENGTH;
+            for (int j = x; j < (blockSize + x); ++j)
             {
-                //remember reconstructed data
-                if (predictedBlock[r + j] < 0) predictedBlock[(i - y) * blockSize + j - x] = 0;
-                else if (predictedBlock[r + j] > 255) predictedBlock[r + j] = 255;
-                reconstructedFrame[h + j] = (unsigned char)predictedBlock[r + j];
+                if (i < HEIGHT && j < LENGTH)
+                {
+                    //remember reconstructed data
+                    if (predictedBlock[r + j] < 0) predictedBlock[(i - y) * blockSize + j - x] = 0;
+                    else if (predictedBlock[r + j] > 255) predictedBlock[r + j] = 255;
+                    reconstructedFrame[h + j] = (unsigned char)predictedBlock[r + j];
+                }
             }
         }
     }
@@ -427,45 +428,40 @@ int splitBlockPadding(char* tempFrame, char* previousFrame, char* reconstructedF
     delete[] reconstructedBlock;
     delete[] predictedBlock;
     delete[] residualBlock;
-
-    return dataCount;
 }
 
-//return no-zero data in frame
-int split(char* startFrame, char* previousFrame, char* reconstructedFrame,
-    int* frameCoef, int* modeMatrix, int blockSize, int Q, int frameN)
+void split(char* startFrame, char* previousFrame, char* reconstructedFrame,
+    int* frameCoef, int* modeMatrix, int* qMatrix, int blockSize, int frameN)
 {
-    int dataCount = 0;
+    double frameVAR = variance(startFrame, pixels_on_video);
     for (int i = 0; i < HEIGHT; i += blockSize)
     {
         for (int j = 0; j < LENGTH; j += blockSize)
         {
-            dataCount += splitBlockPadding(startFrame, previousFrame, reconstructedFrame,
-                frameCoef, modeMatrix, blockSize, Q, i, j, frameN);
+            splitBlockPadding(startFrame, previousFrame, reconstructedFrame,
+                frameCoef, modeMatrix, qMatrix, blockSize, i, j, frameN, frameVAR);
         }
     }
-    return dataCount;
 }
 
-void encoder(int blockSize, int Q)
+void encoder(int blockSize)
 {
     const char* in_string = "y_file.yuv";
-    const char* reconstructed_string = "reconstructed_y_file.yuv";
     const char* mode_string = "mode_file.dat";
     const char* coef_string = "coef_file.dat";
+    const char* q_string = "q_file.dat";
 
     ofstream mode_file(mode_string, ios::out | ios::binary);
+    ofstream q_file(q_string, ios::out | ios::binary);
     ofstream coef_file(coef_string, ios::out | ios::binary);
-    ofstream reconstructed_file(reconstructed_string, ios::out | ios::binary);
     ifstream in_file(in_string, ios::in | ios::binary);
-
 
     char* previousFrame = new char[pixels_on_video];
     char* greyscaleFrame = new char[pixels_on_video];
     char* reconstructedFrame = new char[pixels_on_video];
 
-
     int* modeMatrix;
+    int* qMatrix;
     int hBlock, wBlock;
     if (((int)(HEIGHT / blockSize)) * blockSize == HEIGHT) hBlock = HEIGHT / blockSize;
     else hBlock = HEIGHT / blockSize + 1;
@@ -474,40 +470,28 @@ void encoder(int blockSize, int Q)
     else wBlock = LENGTH / blockSize + 1;
 
     modeMatrix = new int[hBlock * wBlock];
+    qMatrix = new int[hBlock * wBlock];
 
-
-    int* frameCoef;
-    frameCoef = new int[hBlock * blockSize * wBlock * blockSize];
+    int* frameCoef = new int[hBlock * blockSize * wBlock * blockSize];
 
     int frameCount = 0;
-    double psnrSum = 0.0;
-    double dataSum = 0.0;
-    //I compress only 10 frames, cause when we choose a big blockSize, DCT and IDCT will calculate much longer
-    //So in 10 frames we can see a result without a waiting very mach
-    //But with blockSize = 32, or 64, it is very long, for blockSize = 64 one frame is computing for 2-3 minutes.
-    while (frameCount < 1)
+
+    while (frameCount < 2)
     {
         //read data
         for (int i = 0; i < pixels_on_video; ++i)
         {
-            char a;
-            in_file.read(&a, 1);
-            greyscaleFrame[i] = a;
+            in_file.read(&greyscaleFrame[i], 1);
         }
 
         if (in_file.eof()) break;
 
-        int dataStorageAfterEncoding = split(greyscaleFrame, previousFrame, reconstructedFrame,
-            frameCoef, modeMatrix, blockSize, Q, frameCount);
-
-        dataSum += (double)dataStorageAfterEncoding / pixels_on_video;
-        psnrSum += PSNR(greyscaleFrame, reconstructedFrame);
+        split(greyscaleFrame, previousFrame, reconstructedFrame,
+            frameCoef, modeMatrix, qMatrix, blockSize, frameCount);
 
         for (int i = 0; i < pixels_on_video; ++i)
         {
-            previousFrame[i] = reconstructedFrame[i];
-            char a = reconstructedFrame[i];
-            reconstructed_file.write(&a, 1);
+            previousFrame[i] = greyscaleFrame[i];
         }
 
         //write coficients
@@ -520,15 +504,11 @@ void encoder(int blockSize, int Q)
         for (int i = 0; i < hBlock * wBlock; ++i)
         {
             mode_file << modeMatrix[i] << '\n';
+            q_file << qMatrix[i] << '\n';
         }
 
         ++frameCount;
     }
-
-    double averagePSNR = psnrSum / frameCount;
-    double averageComp = dataSum / frameCount;
-    cout << "average PSNR among frames:  " << averagePSNR << " dB" << endl;
-    cout << "average compression among frames:  " << (1.0 - averageComp) * 100 << " %" << endl;
 
     delete[] previousFrame;
     delete[] frameCoef;
@@ -538,6 +518,6 @@ void encoder(int blockSize, int Q)
 
     coef_file.close();
     mode_file.close();
-    reconstructed_file.close();
+    q_file.close();
     in_file.close();
 }

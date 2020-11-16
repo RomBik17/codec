@@ -1,9 +1,55 @@
 
 #include "math_functions.h"
 #include <math.h>
+#include <iostream>
 using namespace std;
 
-double PSNR(char* startFrame, char* dumpedFrame)
+double variance(int* array, int N)
+{
+    double mu;
+    double sum = 0;
+    for (int i = 0; i < N; ++i)
+    {
+        sum += array[i];
+    }
+    mu = sum / N;
+    double var = 0;
+    for (int i = 0; i < N; ++i)
+    {
+        var += pow((array[i] - mu), 2);
+    }
+    var /= (1.0 / (N - 1));
+    if (var == 0) var++;
+    return var;
+}
+
+double variance(char* array, int N)
+{
+    double mu;
+    double sum = 0;
+    for (int i = 0; i < N; ++i)
+    {
+        sum += array[i];
+    }
+    mu = sum / N;
+    double var = 0;
+    for (int i = 0; i < N; ++i)
+    {
+        var += pow((array[i] - mu), 2);
+    }
+    var /= (1.0 / (N - 1));
+    if (var == 0) var++;
+    return var;
+}
+
+int VAQ(double blockVAR, double frameVAR)
+{
+    int PQ;
+    PQ = (int)(D * log10(blockVAR) - log10(frameVAR));
+    return PQ;
+}
+
+double charPSNR(char* startFrame, char* dumpedFrame)
 {
     double sum = 0;
     for (int i = 0; i < pixels_on_video; ++i)
@@ -17,63 +63,67 @@ double PSNR(char* startFrame, char* dumpedFrame)
     return psnr;
 }
 
-void quanting(int* block, int blockSize, int Q)
+void quanting(int* block, int blockSize, int QP)
 {
+    int quant = 1 << QP;
+
     for (int i = 0; i < blockSize; ++i)
     {
         int k = i * blockSize;
         for (int j = 0; j < blockSize; ++j)
         {
             bool quantization = true;
-            int quant = Q;
+            int q = 1;
             if (i == 0 && j == 0)
             {
                 quantization = false;
             }
             else if (i < (blockSize / 2) && j < (blockSize / 2))
             {
-                quant = Q / 2;
+                q = quant / 2;
             }
             else if (i >= (blockSize / 2) && j >= (blockSize / 2))
             {
-                quant = Q * 2;
+                q = quant * 2;
             }
 
             if (quantization)
             {
                 //calculate the nearest multiple of Q
-                block[k + j] /= quant;
+                block[k + j] /= q;
             }
         }
     }
 }
 
-void dequanting(int* block, int blockSize, int Q)
+void dequanting(int* block, int blockSize, int QP)
 {
+    int quant = 1 << QP;
+
     for (int i = 0; i < blockSize; ++i)
     {
         int k = i * blockSize;
         for (int j = 0; j < blockSize; ++j)
         {
             bool quantization = true;
-            int quant = Q;
+            int q = 1;
             if (i == 0 && j == 0)
             {
                 quantization = false;
             }
             else if (i < (blockSize / 2) && j < (blockSize / 2))
             {
-                quant = Q / 2;
+                q = quant / 2;
             }
             else if (i >= (blockSize / 2) && j >= (blockSize / 2))
             {
-                quant = Q * 2;
+                q = quant * 2;
             }
 
             if (quantization)
             {
                 //calculate the nearest multiple of Q
-                block[k + j] *= quant;
+                block[k + j] *= q;
             }
         }
     }

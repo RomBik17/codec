@@ -3,4 +3,4 @@
 #include <fstream>
 #include <iostream>
 
-void encoder(int blockSize, int Q);
+void encoder(int blockSize);

@@ -1,6 +1,9 @@
 #pragma once
 
 #define PI		3.14159265359
+#define Q		3
+#define D		1.5
+#define IR		4
 
 #define Y420    1.5
 #define Y444    3

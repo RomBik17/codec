@@ -3,4 +3,4 @@
 #include <fstream>
 #include <iostream>
 
-void decoder(int blockSize, int Q);
+void decoder(int blockSize);

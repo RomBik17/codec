@@ -3,13 +3,8 @@
 using namespace std;
 
 void reconstructedBlockRead(int* reconstructedBlock, int* decodedFrame, int* previousFrame,
-    int* modeMatrix, int blockSize, int y, int x)
+    int mode, int blockSize, int y, int x)
 {
-    int wBlock;
-    if (((int)(LENGTH / blockSize)) * blockSize == LENGTH) wBlock = LENGTH / blockSize;
-    else wBlock = LENGTH / blockSize + 1;
-    int mode = modeMatrix[(y / blockSize) * wBlock + (x / blockSize)];
-
     //by checking mode read the reconstructed block
     int recY;
     int tempX, tempY;
@@ -205,15 +200,20 @@ void reconstructedBlockRead(int* reconstructedBlock, int* decodedFrame, int* pre
     }
 }
 
-void blockDecoding(int* frameCoef, int* decodedFrame, int* previousFrame, int* modeMatrix, int blockSize, int Q, int y, int x)
+void blockDecoding(int* frameCoef, int* decodedFrame, int* previousFrame, int* modeMatrix, int* qMatrix, int blockSize, int y, int x)
 {
     int* block = new int[blockSize * blockSize];
     int* reconstructedBlock = new int[blockSize * blockSize];
     int* residualBlock = new int[blockSize * blockSize];
 
     int wBlock;
-    if (((int)(LENGTH / blockSize)) * blockSize == LENGTH) wBlock = LENGTH;
-    else wBlock = (LENGTH / blockSize + 1) * blockSize;
+    if (((int)(LENGTH / blockSize)) * blockSize == LENGTH) wBlock = LENGTH / blockSize;
+    else wBlock = LENGTH / blockSize + 1;
+
+    int QP = qMatrix[(y / blockSize) * wBlock + (x / blockSize)];
+    int mode = modeMatrix[(y / blockSize) * wBlock + (x / blockSize)];
+
+    wBlock *= blockSize;
     //read coeficients
     int tempX, tempY;
     for (int i = y; i < (blockSize + y); ++i)
@@ -227,10 +227,10 @@ void blockDecoding(int* frameCoef, int* decodedFrame, int* previousFrame, int* m
     }
 
     //read reconstructed block
-    reconstructedBlockRead(reconstructedBlock, decodedFrame, previousFrame, modeMatrix, blockSize, y, x);
+    reconstructedBlockRead(reconstructedBlock, decodedFrame, previousFrame, mode, blockSize, y, x);
 
     //dequantize, retransform and reconstruct block
-    dequanting(residualBlock, blockSize, Q);
+    dequanting(residualBlock, blockSize, QP);
     IDCT(residualBlock, blockSize);
     reverseSAD(block, reconstructedBlock, residualBlock, blockSize);
 
@@ -256,25 +256,27 @@ void blockDecoding(int* frameCoef, int* decodedFrame, int* previousFrame, int* m
 }
 
 //return no-zero data in frame
-void split(int* frameCoef, int* decodedFrame, int* previousFrame, int* modeMatrix, int blockSize, int Q)
+void split(int* frameCoef, int* decodedFrame, int* previousFrame, int* modeMatrix, int* qMatrix, int blockSize)
 {
 
     for (int i = 0; i < HEIGHT; i += blockSize)
     {
         for (int j = 0; j < LENGTH; j += blockSize)
         {
-            blockDecoding(frameCoef, decodedFrame, previousFrame, modeMatrix, blockSize, Q, i, j);
+            blockDecoding(frameCoef, decodedFrame, previousFrame, modeMatrix, qMatrix, blockSize, i, j);
         }
     }
 }
 
-void decoder(int blockSize, int Q)
+void decoder(int blockSize)
 {
     const char* in_string = "coef_file.dat";
     const char* out_string = "decoded_y_file.yuv";
     const char* mode_string = "mode_file.dat";
+    const char* q_string = "q_file.dat";
 
     ifstream mode_file(mode_string, ios::in | ios::binary);
+    ifstream q_file(q_string, ios::in | ios::binary);
     ofstream decoded_file(out_string, ios::out | ios::binary);
     ifstream in_file(in_string, ios::in | ios::binary);
 
@@ -283,6 +285,7 @@ void decoder(int blockSize, int Q)
 
 
     int* modeMatrix;
+    int* qMatrix;
     int hBlock, wBlock;
     if (((int)(HEIGHT / blockSize)) * blockSize == HEIGHT) hBlock = HEIGHT / blockSize;
     else hBlock = HEIGHT / blockSize + 1;
@@ -291,16 +294,21 @@ void decoder(int blockSize, int Q)
     else wBlock = LENGTH / blockSize + 1;
 
     modeMatrix = new int[hBlock * wBlock];
+    qMatrix = new int[hBlock * wBlock];
 
     int* frameCoef;
     frameCoef = new int[hBlock * blockSize * wBlock * blockSize];
 
+    int frameCount = 0;
+    double psnrSum = 0.0;
+    double minPSNR = 0.0;
     while (true)
     {
         //read prediction modes
         for (int i = 0; i < hBlock * wBlock; ++i)
         {
             mode_file >> modeMatrix[i];
+            q_file >> qMatrix[i];
         }
 
         if (mode_file.eof()) break;
@@ -311,7 +319,7 @@ void decoder(int blockSize, int Q)
             in_file >> frameCoef[i];
         }
 
-        split(frameCoef, decodedFrame, previousFrame, modeMatrix, blockSize, Q);
+        split(frameCoef, decodedFrame, previousFrame, modeMatrix, qMatrix, blockSize);
 
         //write decoded frame
         for (int i = 0; i < pixels_on_video; ++i)
@@ -320,6 +328,8 @@ void decoder(int blockSize, int Q)
             char a = (unsigned char)decodedFrame[i];
             decoded_file.write(&a, 1);
         }
+
+        ++frameCount;
     }
 
     delete[] modeMatrix;
@@ -328,6 +338,7 @@ void decoder(int blockSize, int Q)
     delete[] frameCoef;
 
     mode_file.close();
+    q_file.close();
     decoded_file.close();
     in_file.close();
 }
